@@ -95,6 +95,27 @@ class TestExtractCaptureDatetime:
     def test_returns_none_without_a_usable_value(self, exif):
         assert _extract_capture_datetime(exif) is None
 
+    @pytest.mark.parametrize(
+        "placeholder", ["0000:00:00 00:00:00", "    :  :     :  :  ", "garbage"]
+    )
+    def test_skips_a_placeholder_for_a_later_tag(self, placeholder):
+        """An unset camera clock in DateTimeOriginal must not hide a real date."""
+        exif = FakeExif(
+            ifd0={DATE_TIME: "2024:02:08 12:00:00"},
+            sub_ifd={
+                DATE_TIME_ORIGINAL: placeholder,
+                DATE_TIME_DIGITIZED: "2024:02:07 11:00:00",
+            },
+        )
+        assert _extract_capture_datetime(exif) == "2024:02:07 11:00:00"
+
+    def test_returns_none_when_every_tag_is_a_placeholder(self):
+        exif = FakeExif(
+            ifd0={DATE_TIME: "0000:00:00 00:00:00"},
+            sub_ifd={DATE_TIME_ORIGINAL: "0000:00:00 00:00:00"},
+        )
+        assert _extract_capture_datetime(exif) is None
+
     def test_survives_a_broken_sub_ifd(self):
         """A corrupt sub-IFD must not lose an otherwise readable IFD0 date."""
         exif = ExplodingExif(ifd0={DATE_TIME: "2024:02:08 12:00:00"})
@@ -157,6 +178,19 @@ class TestDateSource:
         path = _write_image(tmp_path / "c.jpg", "2024:02:06 10:36:24")
         _sidecar(path, "2025:09:13 12:28:39")
         assert image_util_extract_metadata(str(path))["date_source"] == "exif"
+
+    def test_placeholder_original_falls_back_to_digitized(self, tmp_path):
+        path = tmp_path / "e.jpg"
+        image = Image.new("RGB", (4, 4), "white")
+        exif = image.getexif()
+        exif[EXIF_IFD_POINTER] = {
+            DATE_TIME_ORIGINAL: "0000:00:00 00:00:00",
+            DATE_TIME_DIGITIZED: "2019:07:04 10:20:30",
+        }
+        image.save(path, exif=exif)
+        metadata = image_util_extract_metadata(str(path))
+        assert metadata["date_source"] == "exif"
+        assert metadata["date_created"] == "2019-07-04T10:20:30"
 
     def test_mtime_is_marked_as_a_guess(self, tmp_path):
         path = _write_image(tmp_path / "d.jpg")

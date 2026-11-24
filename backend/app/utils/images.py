@@ -788,8 +788,15 @@ def _extract_capture_datetime(exif_data: Any) -> Optional[str]:
             if isinstance(value, (bytes, bytearray)):
                 value = value.decode("utf-8", "ignore")
             value = str(value).strip().split("\x00", 1)[0]
-            if value:
-                return value
+            if not value:
+                continue
+            # Cameras with an unset clock write "0000:00:00 00:00:00" here;
+            # stopping on it would hide a real date in a later tag.
+            try:
+                datetime.datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+            except ValueError:
+                continue
+            return value
 
     return None
 
@@ -832,13 +839,9 @@ def image_util_extract_metadata(image_path: str) -> dict:
                 except Exception:
                     exif_data = None
 
+                # Only parseable dates come back, so a placeholder like
+                # "0000:00:00 00:00:00" cannot block the sidecar either.
                 dt_original = _extract_capture_datetime(exif_data)
-                # A placeholder like "0000:00:00 00:00:00" must not block the sidecar.
-                if dt_original:
-                    try:
-                        datetime.datetime.strptime(dt_original, "%Y:%m:%d %H:%M:%S")
-                    except ValueError:
-                        dt_original = None
                 latitude, longitude = _extract_gps_coordinates(exif_data)
 
                 # A Google Takeout export drops EXIF from part of its own
